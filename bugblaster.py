@@ -5,7 +5,6 @@ import requests
 import dns.resolver
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-import subprocess
 import time
 import warnings
 import urllib3
@@ -52,10 +51,16 @@ def recon(target):
         except Exception as e:
             print(Fore.YELLOW + f"[-] DNS error for {full_domain}: {e}")
 
+    subdomains_file = f"{target}_subdomains.txt"
+    if os.path.exists(subdomains_file):
+        with open(subdomains_file, "r") as f:
+            file_subs = [line.strip() for line in f if line.strip()]
+            subdomains.extend(sub for sub in file_subs if sub not in subdomains)
+
     if not subdomains:
         print(Fore.YELLOW + "[-] No subdomains found. Consider installing subfinder for better results.")
     else:
-        with open(f"{target}_subdomains.txt", "w") as f:
+        with open(subdomains_file, "w") as f:
             f.write("\n".join(subdomains))
     return subdomains
 
@@ -115,8 +120,9 @@ def bruteforce(target, wordlist_type="common"):
             try:
                 response = requests.get(url, timeout=15, verify=False)
                 if 200 <= response.status_code < 400:
-                    findings.append(url)
-                    print(Fore.BLUE + f"[+] Found: {url} (Status: {response.status_code})")
+                    finding = f"{url} (Status: {response.status_code}) - Directory Brute-Force"
+                    findings.append(finding)
+                    print(Fore.BLUE + f"[+] Found: {finding}")
             except requests.exceptions.RequestException as e:
                 print(Fore.YELLOW + f"[-] Error checking {url}: {e}")
                 continue
@@ -134,8 +140,8 @@ def vuln_scan(target):
         print(Fore.YELLOW + "[-] No live domains to scan. Skipping vulnerability check.")
         return findings
 
-    payloads = ["<script>alert(1)</script>", "' OR 1=1 --"]
-    test_endpoints = ["/", "/index.php", "/login", "/contact", "/user", "/about", "/admin"]
+    payloads = ["<script>alert(1)</script>", "' OR 1=1 --", "1' OR '1'='1", "<img src=x onerror=alert(1)>"]
+    test_endpoints = ["/", "/index.php", "/login", "/admin", "/test", "/contact", "/user"]
     
     for domain in live_domains:
         print(Fore.RED + f"[+] Scanning domain: {domain}")
@@ -145,7 +151,7 @@ def vuln_scan(target):
                 try:
                     response = requests.get(url, timeout=15, verify=False)
                     if any(p in response.text for p in payloads):
-                        finding = f"Possible XSS/SQLi at {url}"
+                        finding = f"{url} (Payload: {payload}) - Possible XSS/SQLi"
                         findings.append(finding)
                         print(Fore.RED + f"[+] Vulnerable: {finding}")
                     else:
@@ -157,17 +163,28 @@ def vuln_scan(target):
     
     return findings
 
-def generate_report(target, findings):
+def generate_report(target, findings, subdomains, live_domains):
     print(Fore.CYAN + f"[+] Generating report for {target}")
     report = f"BugBlaster Report for {target}\n"
     report += "=" * 50 + "\n"
-    report += "Findings:\n"
-    
+    report += "Subdomains Discovered:\n"
+    if subdomains:
+        for sub in subdomains:
+            report += f"- {sub}\n"
+    else:
+        report += "- None\n"
+    report += "\nLive Domains:\n"
+    if live_domains:
+        for domain in live_domains:
+            report += f"- {domain}\n"
+    else:
+        report += "- None\n"
+    report += "\nFindings:\n"
     if findings:
         for finding in findings:
             report += f"- {finding}\n"
     else:
-        report += "- No vulnerabilities found.\n"
+        report += "- No vulnerabilities or directories found.\n"
     
     with open(f"{target}_report.txt", "w") as f:
         f.write(report)
@@ -203,7 +220,7 @@ def main():
         vuln_findings = vuln_scan(target)
     if module == "all":
         all_findings = brute_findings + vuln_findings
-        generate_report(target, all_findings)
+        generate_report(target, all_findings, subdomains, live_domains)
 
 if __name__ == "__main__":
     main()
